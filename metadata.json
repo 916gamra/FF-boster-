@@ -1,0 +1,6 @@
+{
+  "name": "FF Ping Booster",
+  "description": "Free Fire Ping Booster & Game Network Optimizer",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
