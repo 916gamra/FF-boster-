@@ -36,15 +36,23 @@ class PingBoosterVpnService : VpnService() {
     private var socketToProxy: DatagramSocket? = null
     private var gameServerIP = "161.117.20.15"   
     private val gameServerPort = 5000               
-    private val proxyLocalPort = 8388               
+    private val proxyAddress = "127.0.0.1"        
+    private val proxyPort = 8388               
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+
+    // ==== Packet Stabilizer ====
+    private lateinit var prefs: StabilizerPrefs
+    
+    private var outboundChannel: kotlinx.coroutines.channels.Channel<DatagramPacket>? = null
+    private var inboundChannel: kotlinx.coroutines.channels.Channel<DatagramPacket>? = null
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onCreate() {
         super.onCreate()
+        prefs = StabilizerPrefs(this)
         startForegroundNotification()
     }
 
@@ -114,7 +122,8 @@ class PingBoosterVpnService : VpnService() {
                 scope.launch {
                     try {
                         socketToProxy = DatagramSocket()
-                        socketToProxy?.connect(InetSocketAddress("127.0.0.1", proxyLocalPort))
+                        socketToProxy?.connect(InetSocketAddress(proxyAddress, proxyPort))
+                        startPacketStabilizer()
                         forwardPackets()
                     } catch (e: Exception) {
                         Log.e("PingBooster", "Proxy connection failed", e)
@@ -138,6 +147,45 @@ class PingBoosterVpnService : VpnService() {
         }
     }
 
+    private fun startPacketStabilizer() {
+        val currentDelayMs = prefs.delayMs
+        val currentBufferSize = prefs.bufferSize
+
+        outboundChannel = kotlinx.coroutines.channels.Channel(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        inboundChannel = kotlinx.coroutines.channels.Channel(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
+        // Smooth Sender - prevents burst
+        scope.launch {
+            for (packet in outboundChannel!!) {
+                delay(currentDelayMs)
+                try {
+                    socketToProxy?.send(packet)
+                } catch (e: Exception) {
+                    Log.e("PingBooster", "Error sending packet", e)
+                }
+            }
+        }
+
+        // Jitter Absorber - smooths inbound delivery
+        scope.launch {
+            val jitterBuffer = ArrayDeque<DatagramPacket>(currentBufferSize)
+            val outputStream = FileOutputStream(vpnInterface.fileDescriptor)
+
+            for (packet in inboundChannel!!) {
+                jitterBuffer.addLast(packet)
+                if (jitterBuffer.size >= currentBufferSize) {
+                    val oldestPacket = jitterBuffer.removeFirst()
+                    outputStream.write(oldestPacket.data, 0, oldestPacket.length)
+                }
+            }
+            while (jitterBuffer.isNotEmpty()) {
+                val remaining = jitterBuffer.removeFirst()
+                outputStream.write(remaining.data, 0, remaining.length)
+            }
+            outputStream.close()
+        }
+    }
+
     private suspend fun forwardPackets() = withContext(Dispatchers.IO) {
         val inputStream = FileInputStream(vpnInterface.fileDescriptor)
         val outputStream = FileOutputStream(vpnInterface.fileDescriptor)
@@ -148,18 +196,14 @@ class PingBoosterVpnService : VpnService() {
                 val length = inputStream.read(buffer)
                 if (length > 0) {
                     val packet = buffer.copyOf(length)
-                    if (isGamePacket(packet)) {
-                        socketToProxy?.let { socket ->
-                            val proxyPacket = DatagramPacket(packet, packet.size)
-                            socket.send(proxyPacket)
-                            
-                            val responseBuf = ByteArray(32767)
-                            val response = DatagramPacket(responseBuf, responseBuf.size)
-                            socket.receive(response)
-                            outputStream.write(response.data, 0, response.length)
-                        }
+                    if (isGameOutboundPacket(packet)) {
+                        val udpPacket = DatagramPacket(packet, packet.size, InetSocketAddress(gameServerIP, gameServerPort))
+                        outboundChannel?.send(udpPacket)
+                    } else if (isGameInboundPacket(packet)) {
+                        val udpPacket = DatagramPacket(packet, packet.size)
+                        inboundChannel?.send(udpPacket)
                     } else {
-                        outputStream.write(packet)
+                         outputStream.write(packet)
                     }
                 }
             } catch (e: Exception) {
@@ -169,32 +213,58 @@ class PingBoosterVpnService : VpnService() {
         }
     }
 
-    private fun isGamePacket(packet: ByteArray): Boolean {
+    private fun isGameOutboundPacket(packet: ByteArray): Boolean {
+        return isUdpPacket(packet) && getDestinationIP(packet) == gameServerIP && getDestinationPort(packet) == gameServerPort
+    }
+
+    private fun isGameInboundPacket(packet: ByteArray): Boolean {
+        return isUdpPacket(packet) && getSourceIP(packet) == gameServerIP && getSourcePort(packet) == gameServerPort
+    }
+
+    private fun isUdpPacket(packet: ByteArray): Boolean {
         if (packet.size < 20) return false
         val byteBuffer = ByteBuffer.wrap(packet)
-
         val versionIhl = byteBuffer.get(0).toInt()
         val version = (versionIhl shr 4) and 0x0F
-        if (version != 4) return false 
-
-        val ihl = versionIhl and 0x0F
-        val ipHeaderLength = ihl * 4
-
+        if (version != 4) return false
         val protocol = byteBuffer.get(9).toInt()
-        if (protocol != 17) return false 
+        return protocol == 17
+    }
 
+    private fun getDestinationIP(packet: ByteArray): String {
+        val byteBuffer = ByteBuffer.wrap(packet)
         val destIP = ByteArray(4)
         byteBuffer.position(16)
         byteBuffer.get(destIP)
-        val destIPStr = destIP.joinToString(".") { it.toInt().and(0xFF).toString() }
+        return destIP.joinToString(".") { it.toInt().and(0xFF).toString() }
+    }
 
-        if (packet.size < ipHeaderLength + 8) return false
+    private fun getSourceIP(packet: ByteArray): String {
+        val byteBuffer = ByteBuffer.wrap(packet)
+        val srcIP = ByteArray(4)
+        byteBuffer.position(12)
+        byteBuffer.get(srcIP)
+        return srcIP.joinToString(".") { it.toInt().and(0xFF).toString() }
+    }
 
-        // Correct offset for Destination Port in UDP header
+    private fun getDestinationPort(packet: ByteArray): Int {
+        val byteBuffer = ByteBuffer.wrap(packet)
+        val versionIhl = byteBuffer.get(0).toInt()
+        val ihl = versionIhl and 0x0F
+        val ipHeaderLength = ihl * 4
+        if (packet.size < ipHeaderLength + 8) return 0
         byteBuffer.position(ipHeaderLength + 2)
-        val destPort = (byteBuffer.get().toInt().and(0xFF) shl 8) or (byteBuffer.get().toInt().and(0xFF))
+        return (byteBuffer.get().toInt().and(0xFF) shl 8) or (byteBuffer.get().toInt().and(0xFF))
+    }
 
-        return destIPStr == gameServerIP && destPort == gameServerPort
+    private fun getSourcePort(packet: ByteArray): Int {
+        val byteBuffer = ByteBuffer.wrap(packet)
+        val versionIhl = byteBuffer.get(0).toInt()
+        val ihl = versionIhl and 0x0F
+        val ipHeaderLength = ihl * 4
+        if (packet.size < ipHeaderLength + 8) return 0
+        byteBuffer.position(ipHeaderLength)
+        return (byteBuffer.get().toInt().and(0xFF) shl 8) or (byteBuffer.get().toInt().and(0xFF))
     }
 
     private fun stopVpn() {

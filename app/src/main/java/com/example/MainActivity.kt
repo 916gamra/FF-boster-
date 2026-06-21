@@ -59,6 +59,8 @@ class MainActivity : ComponentActivity() {
     private var isComparing by mutableStateOf(false)
     private val serverPings = mutableStateMapOf<Int, String>()
 
+    private lateinit var stabilizerPrefs: StabilizerPrefs
+
     companion object {
         const val VPN_REQUEST_CODE = 101
     }
@@ -66,6 +68,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        stabilizerPrefs = StabilizerPrefs(this)
 
         // Run auto-comparison on launch to select the optimal server for the user instantly
         lifecycleScope.launch {
@@ -83,6 +86,7 @@ class MainActivity : ComponentActivity() {
                     isComparing = isComparing,
                     serverPings = serverPings,
                     refreshIntervalMs = refreshIntervalMs,
+                    stabilizerPrefs = stabilizerPrefs,
                     onIntervalChange = { newInterval ->
                         refreshIntervalMs = newInterval
                         if (isRunning) {
@@ -228,6 +232,7 @@ fun MainScreen(
     isComparing: Boolean,
     serverPings: Map<Int, String>,
     refreshIntervalMs: Long,
+    stabilizerPrefs: StabilizerPrefs,
     onIntervalChange: (Long) -> Unit,
     onRegionSelect: (Int) -> Unit,
     onCompareServers: () -> Unit,
@@ -828,6 +833,107 @@ fun MainScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                item {
+                    // Packet Stabilizer Card
+                    var delay by remember { mutableStateOf(stabilizerPrefs.delayMs.toFloat()) }
+                    var bufferSize by remember { mutableStateOf(stabilizerPrefs.bufferSize.toFloat()) }
+                    
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White, shape = RoundedCornerShape(22.dp))
+                            .border(1.dp, Color(0xFFE8EAED), RoundedCornerShape(22.dp))
+                            .padding(14.dp)
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .background(Color(0xFFE8F2FF), RoundedCornerShape(10.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        LucideIcon(
+                                            type = LucideIconType.Shield,
+                                            modifier = Modifier.size(15.dp),
+                                            color = Color(0xFF1973E8)
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "Anti-Fake Lag Stabilizer",
+                                            color = Color(0xFF202124),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Jitter absorption settings",
+                                            color = Color(0xFF616467),
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Text(
+                                text = "Transmission Delay: ${delay.toInt()} ms",
+                                color = Color(0xFF202124),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Slider(
+                                value = delay,
+                                onValueChange = { delay = it },
+                                valueRange = 0f..100f,
+                                onValueChangeFinished = { stabilizerPrefs.delayMs = delay.toLong() },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFF1973E8),
+                                    activeTrackColor = Color(0xFF1973E8)
+                                )
+                            )
+                            Text(
+                                text = "Higher delay smooths outbound packet bursts.",
+                                color = Color(0xFF616467),
+                                fontSize = 10.sp
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Text(
+                                text = "Jitter Buffer Size: ${bufferSize.toInt()}",
+                                color = Color(0xFF202124),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Slider(
+                                value = bufferSize,
+                                onValueChange = { bufferSize = it },
+                                valueRange = 2f..30f,
+                                onValueChangeFinished = { stabilizerPrefs.bufferSize = bufferSize.toInt() },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFF1973E8),
+                                    activeTrackColor = Color(0xFF1973E8)
+                                )
+                            )
+                            Text(
+                                text = "Reorders inbound packets to prevent stuttering.",
+                                color = Color(0xFF616467),
+                                fontSize = 10.sp
+                            )
                         }
                     }
                 }
