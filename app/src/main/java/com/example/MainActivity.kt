@@ -937,6 +937,94 @@ fun MainScreen(
                         }
                     }
                 }
+
+                item {
+                    // Device Tweaks Card
+                    var deviceTweaksExpanded by remember { mutableStateOf(false) }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White, shape = RoundedCornerShape(22.dp))
+                            .border(1.dp, Color(0xFFE8EAED), RoundedCornerShape(22.dp))
+                            .padding(14.dp)
+                            .clickable { deviceTweaksExpanded = !deviceTweaksExpanded }
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .background(Color(0xFFE8F2FF), RoundedCornerShape(10.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        LucideIcon(
+                                            type = LucideIconType.Zap,
+                                            modifier = Modifier.size(15.dp),
+                                            color = Color(0xFF1973E8)
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "Device CPU/GPU Booster",
+                                            color = Color(0xFF202124),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Requires ADB WRITE_SECURE_SETTINGS",
+                                            color = Color(0xFF616467),
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+                                LucideIcon(
+                                    type = if (deviceTweaksExpanded) LucideIconType.ChevronUp else LucideIconType.ChevronDown,
+                                    modifier = Modifier.size(18.dp),
+                                    color = Color(0xFF5F6368)
+                                )
+                            }
+
+                            if (deviceTweaksExpanded) {
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                DeviceTweakToggle("High Performance Mode (Samsung)", "Enables global performance mode") { enable ->
+                                    DeviceBooster.enablePerformanceMode(enable)
+                                }
+                                DeviceTweakToggle("Force GPU Rendering", "Forces 2D UI rendering on GPU") { enable ->
+                                    DeviceBooster.enableForceGpuRendering(enable)
+                                }
+                                DeviceTweakToggle("Disable Animations", "Sets animation scales to 0") { enable ->
+                                    DeviceBooster.setAnimationScales(if (enable) 0f else 1f)
+                                }
+                                DeviceTweakToggle("Increase Touch Sensitivity", "Improves screen response") { enable ->
+                                    DeviceBooster.enableTouchSensitivity(enable)
+                                }
+                                DeviceTweakToggle("Cloudflare DNS (1.1.1.1)", "Fast secure DNS") { enable ->
+                                    DeviceBooster.enableCloudflareDns(enable)
+                                }
+                                
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                Button(
+                                    onClick = { DeviceBooster.optimizeRam() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F3F4))
+                                ) {
+                                    Text("Force Clean Background RAM", color = Color(0xFF1973E8))
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Samsung-style large bottom action toggle block
@@ -1011,8 +1099,34 @@ fun getPingColor(pingStr: String): Color {
     }
 }
 
+@Composable
+fun DeviceTweakToggle(title: String, subtitle: String, onToggle: (Boolean) -> Unit) {
+    var isEnabled by remember { mutableStateOf(false) }
+    
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, color = Color(0xFF202124), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(text = subtitle, color = Color(0xFF616467), fontSize = 10.sp)
+        }
+        Switch(
+            checked = isEnabled,
+            onCheckedChange = { 
+                isEnabled = it
+                onToggle(it)
+            },
+            colors = SwitchDefaults.colors(checkedTrackColor = Color(0xFF1973E8))
+        )
+    }
+}
+
 enum class LucideIconType {
-    Shield, Target, Globe, Zap, Cpu, Refresh, Power, Activity
+    Shield, Target, Globe, Zap, Cpu, Refresh, Power, Activity, ChevronDown, ChevronUp
 }
 
 @Composable
@@ -1144,6 +1258,22 @@ fun LucideIcon(
                     lineTo(w * 0.65f, h * 0.38f)
                     lineTo(w * 0.75f, h * 0.52f)
                     lineTo(w, h * 0.5f)
+                }
+                drawPath(path, color = color, style = stroke)
+            }
+            LucideIconType.ChevronDown -> {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w * 0.2f, h * 0.35f)
+                    lineTo(w * 0.5f, h * 0.65f)
+                    lineTo(w * 0.8f, h * 0.35f)
+                }
+                drawPath(path, color = color, style = stroke)
+            }
+            LucideIconType.ChevronUp -> {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w * 0.2f, h * 0.65f)
+                    lineTo(w * 0.5f, h * 0.35f)
+                    lineTo(w * 0.8f, h * 0.65f)
                 }
                 drawPath(path, color = color, style = stroke)
             }
